@@ -10,19 +10,16 @@ require 'fileutils'
 
 module Puppet::Util::Puppetdb
 
-  def self.server
-    config.server
-  end
-
-  def self.port
-    config.port
-  end
-
-  def self.url_path(path)
-    unless path.start_with?("/")
-      path = "/" + path
+  class CommandSubmissionError < Puppet::Error
+    def initialize(msg, context)
+      super(msg)
+      @context = context
     end
-    config.url_prefix + path
+  end
+
+  class InventorySearchError < Puppet::Error
+  end
+  class SoftWriteFailError < Puppet::Error
   end
 
   def self.config
@@ -32,23 +29,6 @@ module Puppet::Util::Puppetdb
 
   def self.puppet3compat?
     defined?(Puppet::Parser::AST::HashOrArrayAccess)
-  end
-
-  # This magical stuff is needed so that the indirector termini will make requests to
-  # the correct host/port, because this module gets mixed in to our indirector
-  # termini.
-  module ClassMethods
-    def server
-      Puppet::Util::Puppetdb.server
-    end
-
-    def port
-      Puppet::Util::Puppetdb.port
-    end
-  end
-
-  def self.included(child)
-    child.extend ClassMethods
   end
 
   # Given an instance of ruby's Time class, this method converts it to a String
@@ -84,6 +64,21 @@ module Puppet::Util::Puppetdb
             [:puppetdb, :command, :submit, command_name, version]) do
       command = Puppet::Util::Puppetdb::Command.new(command_name, version, certname, payload)
       command.submit
+    end
+  end
+
+  # Query PuppetDB.
+  #
+  # @param query [String, Array] The PQL or AST query for PuppetDB
+  # @return [Array<Hash>]
+  def self.query_puppetdb(query)
+    Puppet::Util::Profiler.profile("Submitted query '#{query}'", [:puppetdb, :query, query]) do
+      headers = { "Accept" => "application/json",
+                  "Content-Type" => "application/json; charset=UTF-8" }
+      response = Puppet::Util::Puppetdb::Http.action("/pdb/query/v4", :query) do |http_instance, path|
+        http_instance.post(path, { 'query' => query }.to_json, headers)
+      end
+      JSON.parse(response.body)
     end
   end
 
